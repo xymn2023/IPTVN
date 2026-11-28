@@ -1,0 +1,87 @@
+name: Update IPTV List
+
+on:
+  workflow_dispatch: # 允许你在 GitHub 页面上手动点击按钮测试
+  watch:
+    types: [started]
+  schedule:
+    - cron: '0 0,12 * * *' # 建议改为每天两次，过于频繁可能被 GitHub 封禁
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  Update:
+    runs-on: ubuntu-latest
+    permissions: # 赋予 Action 写入权限
+      contents: write
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: GetTime
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d %H:%M:%S CST')" >> $GITHUB_OUTPUT
+
+    - name: Update Files
+      run: |
+        # 创建临时文件夹防止干扰
+        mkdir -p temp
+        
+        # 1. 央视源 (IPv6)
+        wget https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u -O CCTV.m3u
+        sed -i -n '/央视/,+1p' CCTV.m3u
+        sed -i '1i #EXTM3U' CCTV.m3u
+        sed -i '/^\s*$/d' CCTV.m3u
+
+        # 2. 央视源 (IPv4)
+        wget https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/index.m3u -O CCTV-IPV4.m3u
+        sed -i -n '/央视高清/,+1p' CCTV-IPV4.m3u
+        sed -i '1i #EXTM3U' CCTV-IPV4.m3u
+        sed -i '/^\s*$/d' CCTV-IPV4.m3u
+
+        # 3. 卫视源 (IPv6)
+        wget https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u -O CNTV.m3u
+        sed -i '/央视/,+1d' CNTV.m3u # 移除央视，保留其余
+        sed -i '/^\s*$/d' CNTV.m3u
+
+        # 4. 卫视源 (IPv4)
+        wget https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/index.m3u -O CNTV-IPV4.m3u
+        sed -i -n '/卫视高清/,+1p' CNTV-IPV4.m3u
+        sed -i '1i #EXTM3U' CNTV-IPV4.m3u
+        sed -i '/^\s*$/d' CNTV-IPV4.m3u
+
+        # 5. 港澳台 (注意：外部源可能失效)
+        wget https://raw.githubusercontent.com/Mitchll1214/m3u/main/港澳台.m3u -O GAT.m3u || touch GAT.m3u
+        sed -i -n '/港澳台/{N;p;}' GAT.m3u
+        sed -i '1i #EXTM3U' GAT.m3u
+
+        # 6. 整合总表 IPTV.m3u (IPv6为主)
+        echo "#EXTM3U" > IPTV.m3u
+        grep -v "#EXTM3U" CCTV.m3u >> IPTV.m3u
+        grep -v "#EXTM3U" CNTV.m3u >> IPTV.m3u
+        grep -v "#EXTM3U" GAT.m3u >> IPTV.m3u
+        sed -i '/^\s*$/d' IPTV.m3u
+
+        # 7. 整合总表 IPV4.m3u
+        echo "#EXTM3U" > IPV4.m3u
+        grep -v "#EXTM3U" CCTV-IPV4.m3u >> IPV4.m3u
+        grep -v "#EXTM3U" CNTV-IPV4.m3u >> IPV4.m3u
+        sed -i '/^\s*$/d' IPV4.m3u
+
+        # 8. 节目源 EPG
+        wget https://epg.112114.xyz/pp.xml -O EPG.xml || echo "EPG download failed"
+        
+        echo "Auto Update IPTV in ${{ steps.date.outputs.date }}" > README.md
+
+    - name: Push To Branch
+      run: |
+        git config --local user.email "actions@github.com"
+        git config --local user.name "GitHub Actions"
+        # 强制更新 Files 分支
+        git checkout --orphan latest_branch
+        git add -A
+        git commit -am "${{ steps.date.outputs.date }}"
+        git branch -M Files
+        git push -f origin Files
